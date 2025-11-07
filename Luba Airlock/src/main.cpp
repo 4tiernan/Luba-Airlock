@@ -18,8 +18,8 @@ class DoorOpener{
     double Kp=0.1, Ki=0, Kd=0;
     
     // Constructor
-    DoorOpener() : motorPID(&pid_input, &pid_output, &pid_setpoint, Kp, Ki, Kd, DIRECT) {
-    }
+    //DoorOpener() : motorPID(&pid_input, &pid_output, &pid_setpoint, Kp, Ki, Kd, DIRECT) {
+    //}
 
     void SetupMotor(int _INA, int _INB, int _PWM){
       INA_PIN = _INA;
@@ -83,8 +83,8 @@ class DoorOpener{
     bool doorState; //Open or closed
     ESP32Encoder encoder;
 
-    double pid_input, pid_output, pid_setpoint;
-    PID motorPID;
+    //double pid_input, pid_output, pid_setpoint;
+    //PID motorPID;
     
     
     void Drive(bool dir, int pwm){
@@ -103,6 +103,7 @@ class DoorOpener{
 
     int PositionTracking(long targetPos, bool homing){//Non-Blocking run to pos
       currentPos = encoder.getCount();
+      
       bool dir = 0;
       long positionError = currentPos-targetPos;
       if(positionError > 0)dir = 1;
@@ -113,13 +114,13 @@ class DoorOpener{
       trackingPWM = (trackingPWM, MIN_PWM, MAX_PWM);
       Drive(dir, trackingPWM);
       Serial.println("Current Pos: "+String(currentPos)+"  PWM: "+String(trackingPWM));
-
       return positionError;
     }
 
     void RunToPosition(long targetPos){ //Blocking run to pos
       unsigned long start_timestamp = millis();
-      while(PositionTracking(targetPos, false) < CAPTURE_DIST && millis()-start_timestamp <= DOOR_ACTUATION_TIMEOUT)
+      while(PositionTracking(targetPos, false) < CAPTURE_DIST && millis()-start_timestamp <= DOOR_ACTUATION_TIMEOUT*1000);
+
       if(millis()-start_timestamp >= DOOR_ACTUATION_TIMEOUT){
         digitalWrite(ErrorPin, HIGH);
         Drive(0,0);
