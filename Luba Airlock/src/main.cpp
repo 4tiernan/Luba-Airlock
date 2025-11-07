@@ -3,7 +3,7 @@
 #include <PID_v1.h>
 
 
-#define MIN_PWM 40
+#define MIN_PWM 60
 #define MAX_PWM 150
 #define TARGET_RPM 60
 #define CLICKS_PER_ROTATION 464.64
@@ -11,7 +11,7 @@
 #define HOMING_PWM 50
 #define HOMING_TIME 5 //Seconds to enguage motor to perform homing
 
-#define CAPTURE_DIST 40 // Clicks to consider a target pos captured.
+#define CAPTURE_DIST 100 // Clicks to consider a target pos captured.
 #define DOOR_ACTUATION_TIMEOUT 10 // Max time (secodns) for motor to stay on while opening or closing (not accounting for holding door open)
 class DoorOpener{
   public:
@@ -57,7 +57,7 @@ class DoorOpener{
     void Home(){
       encoder.setCount(closePos);
       unsigned long homing_timestamp = millis();
-      while(millis() - homing_timestamp < HOMING_TIME){
+      while(millis() - homing_timestamp < HOMING_TIME*1000){
         PositionTracking(openPos, true);
       }
       encoder.setCount(openPos);
@@ -70,7 +70,21 @@ class DoorOpener{
     void Close(){
       RunToPosition(closePos);
     }
-    
+    int PositionTracking(long targetPos, bool homing){//Non-Blocking run to pos
+      currentPos = encoder.getCount();
+      
+      bool dir = 0;
+      long positionError = currentPos-targetPos;
+      if(positionError > 0)dir = 1;
+
+      int trackingPWM = abs(positionError)*0.1;
+      trackingPWM = constrain(trackingPWM, 0, MAX_PWM);
+      if(trackingPWM < MIN_PWM)trackingPWM = 0;
+      if(homing)trackingPWM = HOMING_PWM;
+      Drive(dir, trackingPWM);
+      Serial.println("Current Pos: "+String(currentPos)+"  PWM: "+String(trackingPWM)+"  Error: "+String(positionError));
+      return positionError;
+    }
 
      
   //PID??????? limit open time
@@ -101,21 +115,7 @@ class DoorOpener{
       analogWrite(PWM_PIN, pwm);
     }
 
-    int PositionTracking(long targetPos, bool homing){//Non-Blocking run to pos
-      currentPos = encoder.getCount();
-      
-      bool dir = 0;
-      long positionError = currentPos-targetPos;
-      if(positionError > 0)dir = 1;
-
-      int trackingPWM = abs(positionError)/10;
-      if(trackingPWM < MIN_PWM)trackingPWM = 0;
-      if(homing)trackingPWM = HOMING_PWM;
-      trackingPWM = (trackingPWM, MIN_PWM, MAX_PWM);
-      Drive(dir, trackingPWM);
-      Serial.println("Current Pos: "+String(currentPos)+"  PWM: "+String(trackingPWM));
-      return positionError;
-    }
+    
 
     void RunToPosition(long targetPos){ //Blocking run to pos
       unsigned long start_timestamp = millis();
@@ -134,10 +134,12 @@ DoorOpener backDoor;
 
 void setup() {
   Serial.begin(115200);
+  pinMode(27, OUTPUT);
+  digitalWrite(27, HIGH);
   // put your setup code here, to run once:
   frontDoor.SetupEncoder(34, 35);
   frontDoor.SetupMotor(16, 17, 18);
-  frontDoor.SetPositions(0, 1000);
+  frontDoor.SetPositions(0, 2500);
   frontDoor.SetErrorPin(23);
 
   //backDoor.SetupEncoder();
@@ -149,6 +151,8 @@ void setup() {
 }
 
 void loop() {
+  //frontDoor.PositionTracking(1000, false);
+  
   Serial.println("Opening");
   frontDoor.Open();
   unsigned long start = millis();
