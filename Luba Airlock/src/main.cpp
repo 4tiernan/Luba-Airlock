@@ -13,6 +13,7 @@
 
 #define CAPTURE_DIST 100 // Clicks to consider a target pos captured.
 #define DOOR_ACTUATION_TIMEOUT 10 // Max time (secodns) for motor to stay on while opening or closing (not accounting for holding door open)
+#define MAX_DOOR_OPEN_TIME 30 //Max time (seconds) for door to remain open
 class DoorOpener{
   public:
     double Kp=0.1, Ki=0, Kd=0;
@@ -50,7 +51,15 @@ class DoorOpener{
     }
 
     void Run(){
-      if(doorState == 1)PositionTracking(openPos, false);
+      if(doorState == true){
+        if(millis() - door_open_timestamp < MAX_DOOR_OPEN_TIME*1000){
+          PositionTracking(openPos, false);
+        }else{
+          Close();
+        }
+      }
+
+      
       currentPos = encoder.getCount();
     }
 
@@ -65,9 +74,12 @@ class DoorOpener{
     }
 
     void Open(){
+      doorState = true;
+      door_open_timestamp = millis();
       RunToPosition(openPos);
     }
     void Close(){
+      doorState = false;
       RunToPosition(closePos);
     }
     int PositionTracking(long targetPos, bool homing){//Non-Blocking run to pos
@@ -76,6 +88,7 @@ class DoorOpener{
       bool dir = 0;
       long positionError = currentPos-targetPos;
       if(positionError > 0)dir = 1;
+      if(digitalRead(ErrorPin))return positionError;
 
       int trackingPWM = abs(positionError)*0.1;
       trackingPWM = constrain(trackingPWM, 0, MAX_PWM);
@@ -95,6 +108,7 @@ class DoorOpener{
     int ErrorPin;
     long openPos, closePos, currentPos;
     bool doorState; //Open or closed
+    unsigned long door_open_timestamp;
     ESP32Encoder encoder;
 
     //double pid_input, pid_output, pid_setpoint;
@@ -119,10 +133,13 @@ class DoorOpener{
 
     void RunToPosition(long targetPos){ //Blocking run to pos
       unsigned long start_timestamp = millis();
+      if(digitalRead(ErrorPin))return;
+      
       while(PositionTracking(targetPos, false) < CAPTURE_DIST && millis()-start_timestamp <= DOOR_ACTUATION_TIMEOUT*1000);
 
-      if(millis()-start_timestamp >= DOOR_ACTUATION_TIMEOUT){
+      if(millis()-start_timestamp >= DOOR_ACTUATION_TIMEOUT*1000){
         digitalWrite(ErrorPin, HIGH);
+        Serial.println("Door Actuation Timeout");
         Drive(0,0);
       }   
     }
