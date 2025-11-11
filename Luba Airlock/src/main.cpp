@@ -62,24 +62,12 @@ class DoorOpener{
       homePosOffset = offset;
     }
 
-    void Run(){
-      if(doorState == true){
-        if(millis() - door_open_timestamp < MAX_DOOR_OPEN_TIME*1000){
-          //PositionTracking(openPos, false);
-        }else{
-          Close();
-        }
-      }
-            
-      currentPos = encoder.getCount();
-    }
-
     void Home(){
       unsigned long homing_timestamp = millis();
       Serial.println("Homing");
       while(rpm == 0 && millis() - homing_timestamp < 1000){
         Drive(-200);
-        Serial.println("RPM: 0!!");
+        //Serial.println("RPM: 0!!");
       }
       unsigned long last_movement_timestamp = millis();
       while(millis()-last_movement_timestamp < 1000 && millis() - homing_timestamp < HOMING_TIME*1000){
@@ -103,35 +91,45 @@ class DoorOpener{
       }
     }
 
+
     void Open(){
       doorState = true;
       door_open_timestamp = millis();
       last_motor_pwm = -100;
-
+      RunToPosition(openPos, OPENING_RPM, false);
       Serial.println("Open");
-      while(abs(currentPos-openPos) > CAPTURE_DIST && millis()-door_open_timestamp < DOOR_ACTUATION_TIMEOUT*1000){
-        DrivePID(Sign(openPos-currentPos)*OPENING_RPM, false);
-      }
-      last_motor_pwm = 0;
-      Break(255);
-      if(millis()-door_open_timestamp > DOOR_ACTUATION_TIMEOUT*1000){
-        Serial.println("Failed to Close door");
-        digitalWrite(ErrorPin, HIGH);
-        while(true);
-      }
+      
     }
     void Close(){
       doorState = false;
       last_motor_pwm = 50;
-      Serial.println("Close");
-      unsigned long start = millis();
-      while(abs(closePos-currentPos) > CAPTURE_DIST && millis()-start < DOOR_ACTUATION_TIMEOUT*1000){
-        DrivePID(Sign(closePos-currentPos)*CLOSING_RPM, true);
+      RunToPosition(closePos, CLOSING_RPM, true);
+      Serial.println("Closed");
+    }
+
+ private:
+    int INA_PIN, INB_PIN, PWM_PIN, ENA_PIN, CS_PIN;
+    int Encoder_A_Pin, Encoder_B_Pin;
+    int ErrorPin;
+    double last_motor_pwm; 
+    long openPos, closePos, homePosOffset, last_speed_pos;
+    bool doorState; //Open or closed
+    bool breaking_active;
+    unsigned long door_open_timestamp, last_pid_timestamp, last_rpm_timestamp;
+    ESP32Encoder encoder;
+
+    double pid_input, pid_output, pid_setpoint;
+    PID motorPID;
+    
+    void RunToPosition(int targetPos, int rpm_target, bool closing){
+      unsigned long start_timestamp = millis();
+      while(abs(currentPos-targetPos) > CAPTURE_DIST && millis()-start_timestamp < DOOR_ACTUATION_TIMEOUT*1000){
+        DrivePID(Sign(targetPos-currentPos)*rpm_target, closing);
       }
       last_motor_pwm = 0;
       Break(255);
-      if(millis()-start > DOOR_ACTUATION_TIMEOUT*1000){
-        Serial.println("Failed to Close door");
+      if(millis()-start_timestamp >= DOOR_ACTUATION_TIMEOUT*1000){
+        Serial.println("Failed to actuate door");
         digitalWrite(ErrorPin, HIGH);
         while(true);
       }
@@ -165,25 +163,6 @@ class DoorOpener{
         //Serial.println("PWM: "+String(last_motor_pwm)+" abs(rpm-target_rpm)*10: "+String(abs(rpm-target_rpm)*10)+"  RPM: "+String(rpm)+"  Target: "+String(target_rpm)+"  Current Pos: "+String(currentPos));
       }      
     }
-
-
-     
-  //PID??????? limit open time
-
- private:
-    int INA_PIN, INB_PIN, PWM_PIN, ENA_PIN, CS_PIN;
-    int Encoder_A_Pin, Encoder_B_Pin;
-    int ErrorPin;
-    double last_motor_pwm; 
-    long openPos, closePos, homePosOffset, last_speed_pos;
-    bool doorState; //Open or closed
-    bool breaking_active;
-    unsigned long door_open_timestamp, last_pid_timestamp, last_rpm_timestamp;
-    ESP32Encoder encoder;
-
-    double pid_input, pid_output, pid_setpoint;
-    PID motorPID;
-    
     
     void Drive(int pwm){ //Takes -255 to 255
       pwm = constrain(pwm, -255, 255);
@@ -217,25 +196,8 @@ class DoorOpener{
         rpm = rotations/minutes;
         last_speed_pos = currentPos;
         last_rpm_timestamp = millis();
-        Serial.println(currentPos); 
       }
     }
-
-    
-
-    void RunToPosition(long targetPos){ //Blocking run to pos
-      unsigned long start_timestamp = millis();
-      if(digitalRead(ErrorPin))return;
-      
-      //while(PositionTracking(targetPos, false) < CAPTURE_DIST && millis()-start_timestamp <= DOOR_ACTUATION_TIMEOUT*1000);
-
-      if(millis()-start_timestamp >= DOOR_ACTUATION_TIMEOUT*1000){
-        digitalWrite(ErrorPin, HIGH);
-        Serial.println("Door Actuation Timeout");
-        //Drive(0,0);
-      }   
-    }
-
 };
 
 DoorOpener frontDoor;
@@ -248,7 +210,7 @@ void setup() {
   // put your setup code here, to run once:
   frontDoor.SetupEncoder(34, 35);
   frontDoor.SetupMotor(17, 16, 18);
-  frontDoor.SetPositions(-2550, 0, -250);
+  frontDoor.SetPositions(-2550, 0, -200);
   frontDoor.SetErrorPin(23);
 
   //backDoor.SetupEncoder();
