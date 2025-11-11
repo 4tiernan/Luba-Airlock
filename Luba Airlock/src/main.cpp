@@ -5,13 +5,12 @@
 
 #define MIN_PWM 60
 #define MAX_PWM 150
-#define OPENING_RPM 150
+#define OPENING_RPM 100
 #define CLOSING_RPM 50
 #define CLICKS_PER_ROTATION 464.64
 #define PID_FREQUENCY 50 //Hz
 
-
-#define HOMING_PWM 100
+#define HOMING_PWM 150
 #define HOMING_TIME 7 //Seconds to enguage motor to perform homing
 
 #define CAPTURE_DIST 100 // Clicks to consider a target pos captured.
@@ -86,6 +85,8 @@ class DoorOpener{
       while(millis()-last_movement_timestamp < 1000 && millis() - homing_timestamp < HOMING_TIME*1000){
         Drive(-HOMING_PWM);
         if(abs(rpm) > 5)last_movement_timestamp = millis();
+        delay(10);
+        //Serial.println(millis());
         //Serial.println("RPM: "+String(rpm));
       }
       Break(255);
