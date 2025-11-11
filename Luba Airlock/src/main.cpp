@@ -5,20 +5,28 @@
 
 #define MIN_PWM 60
 #define MAX_PWM 150
-#define TARGET_RPM 60
+#define OPENING_RPM 150
+#define CLOSING_RPM 50
 #define CLICKS_PER_ROTATION 464.64
 #define PID_FREQUENCY 50 //Hz
 
 
-#define HOMING_RPM 60
-#define HOMING_TIME 5 //Seconds to enguage motor to perform homing
+#define HOMING_PWM 100
+#define HOMING_TIME 7 //Seconds to enguage motor to perform homing
 
 #define CAPTURE_DIST 100 // Clicks to consider a target pos captured.
-#define DOOR_ACTUATION_TIMEOUT 10 // Max time (secodns) for motor to stay on while opening or closing (not accounting for holding door open)
+#define DOOR_ACTUATION_TIMEOUT 20 // Max time (secodns) for motor to stay on while opening or closing (not accounting for holding door open)
 #define MAX_DOOR_OPEN_TIME 30 //Max time (seconds) for door to remain open
+int Sign(int val){
+  if(val > 0)return 1;
+  if(val < 0)return -1;
+  return 0;
+}
+
 class DoorOpener{
   public:
     long currentPos;
+    double rpm;
     double Kp=0.01, Ki=0, Kd=0.00;
     // Constructor
     DoorOpener() : motorPID(&pid_input, &pid_output, &pid_setpoint, Kp, Ki, Kd, DIRECT) {
@@ -49,9 +57,10 @@ class DoorOpener{
       encoder.setCount(0);
     }
 
-    void SetPositions(long open, long closed){
+    void SetPositions(long open, long closed, long offset){
       openPos = open;
       closePos = closed;
+      homePosOffset = offset;
     }
 
     void Run(){
@@ -67,15 +76,29 @@ class DoorOpener{
     }
 
     void Home(){
-      encoder.setCount(closePos);
       unsigned long homing_timestamp = millis();
       Serial.println("Homing");
-      while(millis() - homing_timestamp < HOMING_TIME*1000){
-        //PositionTracking(openPos, true);
+      while(rpm == 0 && millis() - homing_timestamp < 1000){
+        Drive(-200);
+        Serial.println("RPM: 0!!");
       }
-      Serial.println("Homing Complete, reset encoder count");
-      encoder.setCount(openPos);
-      Close();
+      unsigned long last_movement_timestamp = millis();
+      while(millis()-last_movement_timestamp < 1000 && millis() - homing_timestamp < HOMING_TIME*1000){
+        Drive(-HOMING_PWM);
+        if(abs(rpm) > 5)last_movement_timestamp = millis();
+        //Serial.println("RPM: "+String(rpm));
+      }
+      Break(255);
+      if(millis() - homing_timestamp >= HOMING_TIME*1000 || currentPos == 0){
+        Serial.println("Homing failed!!!");
+        digitalWrite(ErrorPin, HIGH);
+        while(true);
+      }else{
+        //Serial.println("POS: "+String(currentPos));
+        Serial.println("Homing Complete, reset encoder count to: "+String(openPos+homePosOffset));
+        encoder.setCount(openPos+homePosOffset);
+        Close();
+      }
     }
 
     void Open(){
@@ -84,46 +107,37 @@ class DoorOpener{
       last_motor_pwm = -100;
 
       Serial.println("Open");
-      while(currentPos > -2400 && millis()-door_open_timestamp <20000){
-        DrivePID(-60, false);
+      while(abs(currentPos-openPos) > CAPTURE_DIST && millis()-door_open_timestamp < DOOR_ACTUATION_TIMEOUT*1000){
+        DrivePID(Sign(openPos-currentPos)*OPENING_RPM, false);
       }
       last_motor_pwm = 0;
       Break(255);
+      if(millis()-door_open_timestamp > DOOR_ACTUATION_TIMEOUT*1000){
+        Serial.println("Failed to Close door");
+        digitalWrite(ErrorPin, HIGH);
+        while(true);
+      }
     }
     void Close(){
       doorState = false;
+      last_motor_pwm = 50;
       Serial.println("Close");
       unsigned long start = millis();
-      while(currentPos < 0 && millis()-start < 20000){
-        DrivePID(60, true);
+      while(abs(openPos-currentPos) > CAPTURE_DIST && millis()-start < DOOR_ACTUATION_TIMEOUT*1000){
+        DrivePID(Sign(openPos-currentPos)*CLOSING_RPM, true);
       }
       last_motor_pwm = 0;
       Break(255);
+      if(millis()-start > DOOR_ACTUATION_TIMEOUT*1000){
+        Serial.println("Failed to Close door");
+        digitalWrite(ErrorPin, HIGH);
+        while(true);
+      }
     }
-    /*
-    int PositionTracking(long targetPos, bool homing){//Non-Blocking run to pos
-      currentPos = encoder.getCount();
-      
-      bool dir = 0;
-      long positionError = currentPos-targetPos;
-      if(positionError > 0)dir = 1;
-      if(digitalRead(ErrorPin))return positionError;
 
-      int trackingPWM = abs(positionError)*0.2;
-      trackingPWM = constrain(trackingPWM, 0, MAX_PWM);
-      if(trackingPWM < MIN_PWM)trackingPWM = 0;
-      if(homing)trackingPWM = HOMING_PWM;
-      Drive(dir, trackingPWM);
-      Serial.println("Current Pos: "+String(currentPos)+" Target Pos: "+String(targetPos)+"  PWM: "+String(trackingPWM)+"  Error: "+String(positionError));
-      return positionError;
-    }*/
     void DrivePID(int target_rpm, bool closing){
       if(millis()-last_pid_timestamp > (1/double(PID_FREQUENCY))*1000){
-        currentPos = encoder.getCount();
-        double minutes = ((millis()-last_pid_timestamp)/1000.0)/60.0;
-        double rotations = (currentPos-last_speed_pos)/CLICKS_PER_ROTATION;
-        double rpm = rotations/minutes;
-
+        EncoderCompute();
         pid_input = rpm;
         pid_setpoint = target_rpm;
         //Serial.println("  Clicks: "+String(currentPos-last_speed_pos));
@@ -135,22 +149,21 @@ class DoorOpener{
         motorPID.Compute();
         last_motor_pwm += pid_output;
         last_motor_pwm = constrain(last_motor_pwm, -255, 255);
+        if(abs(rpm) > abs(target_rpm)+50){
+          breaking_active = true;
+        }else if(abs(rpm) == 0){
+          breaking_active = false;
+        }
         
-        if(closing && abs(rpm) > abs(target_rpm)*0){
-          Break(abs(last_motor_pwm)*0.1);
-          Serial.println("BREAKINGASDFG");
+        if(closing && breaking_active){
+          Break(abs(rpm-target_rpm)*5);
         }else{
           Drive(last_motor_pwm);
         }
-        Serial.println("closing: "+String(closing)+" PWM: "+String(last_motor_pwm)+" pid: "+String(pid_output)+"  RPM: "+String(rpm)+"  Target: "+String(target_rpm)+"  Current Pos: "+String(currentPos));
+        //Serial.println("PWM: "+String(last_motor_pwm)+" abs(rpm-target_rpm)*10: "+String(abs(rpm-target_rpm)*10)+"  RPM: "+String(rpm)+"  Target: "+String(target_rpm)+"  Current Pos: "+String(currentPos));
       }      
     }
 
-    int Sign(int val){
-      if(val > 0)return 1;
-      if(val < 0)return -1;
-      return 0;
-    }
 
      
   //PID??????? limit open time
@@ -160,9 +173,10 @@ class DoorOpener{
     int Encoder_A_Pin, Encoder_B_Pin;
     int ErrorPin;
     double last_motor_pwm; 
-    long openPos, closePos, last_speed_pos;
+    long openPos, closePos, homePosOffset, last_speed_pos;
     bool doorState; //Open or closed
-    unsigned long door_open_timestamp, last_pid_timestamp;
+    bool breaking_active;
+    unsigned long door_open_timestamp, last_pid_timestamp, last_rpm_timestamp;
     ESP32Encoder encoder;
 
     double pid_input, pid_output, pid_setpoint;
@@ -172,23 +186,36 @@ class DoorOpener{
     void Drive(int pwm){ //Takes -255 to 255
       pwm = constrain(pwm, -255, 255);
       if(pwm == 0){
-        digitalWrite(INA_PIN, LOW);
+        analogWrite(INA_PIN, 0);//Using PWM as breaking function requires it
         analogWrite(INB_PIN, 0);
       }else if(pwm > 0){
-        digitalWrite(INA_PIN, LOW);
+        analogWrite(INA_PIN, 0);
         analogWrite(INB_PIN, 255);
       }else if(pwm < 0){
-        digitalWrite(INA_PIN, HIGH);
-        digitalWrite(INB_PIN, LOW);
+        analogWrite(INA_PIN, 255);
+        analogWrite(INB_PIN, 0);
       } 
       analogWrite(PWM_PIN, abs(pwm));
+      EncoderCompute();
     }
 
     void Break(int pwm){
       pwm = constrain(pwm, 0, 255);
-      digitalWrite(INA_PIN, HIGH);
+      analogWrite(INA_PIN, abs(pwm));
       analogWrite(INB_PIN, abs(pwm));
       analogWrite(PWM_PIN, abs(0));
+      EncoderCompute();
+    }
+
+    void EncoderCompute(){
+      if(millis()-last_rpm_timestamp > 20){
+        currentPos = encoder.getCount();
+        double minutes = ((millis()-last_rpm_timestamp)/1000.0)/60.0;
+        double rotations = (currentPos-last_speed_pos)/CLICKS_PER_ROTATION;
+        rpm = rotations/minutes;
+        last_speed_pos = currentPos;
+        last_rpm_timestamp = millis(); 
+      }
     }
 
     
@@ -218,22 +245,23 @@ void setup() {
   // put your setup code here, to run once:
   frontDoor.SetupEncoder(34, 35);
   frontDoor.SetupMotor(17, 16, 18);
-  frontDoor.SetPositions(0, 2500);
+  frontDoor.SetPositions(-2450, 0, -50);
   frontDoor.SetErrorPin(23);
 
   //backDoor.SetupEncoder();
-  backDoor.SetupMotor(19, 21, 22);
-  backDoor.SetPositions(0, 1000);
-  backDoor.SetErrorPin(23);
+  //backDoor.SetupMotor(19, 21, 22);
+  //backDoor.SetPositions(0, -2450, 100);
+  //backDoor.SetErrorPin(23);
 
-  //frontDoor.Home();
+  frontDoor.Home();
 }
 void loop() {
   //frontDoor.PositionTracking(1000, false);
+  delay(3000);
   frontDoor.Open();
-  delay(1000);
+  delay(3000);
   frontDoor.Close();
-  delay(1000);
+  
 
   
   
