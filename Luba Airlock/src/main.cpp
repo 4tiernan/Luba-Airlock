@@ -10,10 +10,10 @@
 #define CLICKS_PER_ROTATION 464.64
 #define PID_FREQUENCY 50 //Hz
 
-#define HOMING_PWM 150
+#define HOMING_PWM 100
 #define HOMING_TIME 7 //Seconds to enguage motor to perform homing
 
-#define CAPTURE_DIST 100 // Clicks to consider a target pos captured.
+#define CAPTURE_DIST 10 // Clicks to consider a target pos captured.
 #define DOOR_ACTUATION_TIMEOUT 20 // Max time (secodns) for motor to stay on while opening or closing (not accounting for holding door open)
 #define MAX_DOOR_OPEN_TIME 30 //Max time (seconds) for door to remain open
 int Sign(int val){
@@ -98,6 +98,7 @@ class DoorOpener{
         //Serial.println("POS: "+String(currentPos));
         Serial.println("Homing Complete, reset encoder count to: "+String(openPos+homePosOffset));
         encoder.setCount(openPos+homePosOffset);
+        EncoderCompute();
         Close();
       }
     }
@@ -124,8 +125,8 @@ class DoorOpener{
       last_motor_pwm = 50;
       Serial.println("Close");
       unsigned long start = millis();
-      while(abs(openPos-currentPos) > CAPTURE_DIST && millis()-start < DOOR_ACTUATION_TIMEOUT*1000){
-        DrivePID(Sign(openPos-currentPos)*CLOSING_RPM, true);
+      while(abs(closePos-currentPos) > CAPTURE_DIST && millis()-start < DOOR_ACTUATION_TIMEOUT*1000){
+        DrivePID(Sign(closePos-currentPos)*CLOSING_RPM, true);
       }
       last_motor_pwm = 0;
       Break(255);
@@ -215,7 +216,8 @@ class DoorOpener{
         double rotations = (currentPos-last_speed_pos)/CLICKS_PER_ROTATION;
         rpm = rotations/minutes;
         last_speed_pos = currentPos;
-        last_rpm_timestamp = millis(); 
+        last_rpm_timestamp = millis();
+        Serial.println(currentPos); 
       }
     }
 
@@ -246,7 +248,7 @@ void setup() {
   // put your setup code here, to run once:
   frontDoor.SetupEncoder(34, 35);
   frontDoor.SetupMotor(17, 16, 18);
-  frontDoor.SetPositions(-2450, 0, -50);
+  frontDoor.SetPositions(-2550, 0, -250);
   frontDoor.SetErrorPin(23);
 
   //backDoor.SetupEncoder();
